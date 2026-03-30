@@ -317,9 +317,6 @@ npm test
 
 Every correctness property from the design document is covered by a property-based test that runs 100+ iterations with randomly generated inputs.
 
-## License
-
-MIT
 
 ## Why This Matters
 
@@ -350,3 +347,7 @@ MIT
 - **Cost arbitrage across models** — Auto-route to the cheapest model+language combination that meets a quality threshold.
 - **Continuous multilingual monitoring** — Extend `/v1/evaluate` into a production monitoring tool that alerts when quality drops for specific languages.
 - **Auto-tuning routing policies** — A/B test translated vs direct paths per language using the shadow evaluator and auto-tune routing policies from real quality data.
+
+## License
+
+MIT
