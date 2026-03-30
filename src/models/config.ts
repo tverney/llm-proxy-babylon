@@ -1,11 +1,12 @@
 import type { RoutingAction, TaskCategory } from './types.ts';
 
-export type TranslatorBackend = 'libretranslate' | 'deepl' | 'google' | 'custom';
+export type TranslatorBackend = 'libretranslate' | 'amazon-translate' | 'deepl' | 'google' | 'custom';
 
 export interface TranslatorConfig {
   backend: TranslatorBackend;
   endpoint: string;
   apiKey?: string;
+  awsRegion?: string;
 }
 
 export interface LanguagePerformance {

@@ -48,8 +48,9 @@ const server = new ProxyServer({
     ],
   },
   translatorConfig: {
-    backend: 'libretranslate',
+    backend: (process.env.TRANSLATOR_BACKEND ?? 'libretranslate') as 'libretranslate' | 'amazon-translate',
     endpoint: process.env.LIBRETRANSLATE_ENDPOINT ?? 'http://localhost:5000',
+    awsRegion: process.env.AWS_REGION ?? 'us-east-1',
   },
   shadowEnabled: false,
 });
@@ -66,5 +67,12 @@ server.start(PORT).then(() => {
     console.log(`  Model:    ${process.env.BEDROCK_MODEL_ID ?? 'us.amazon.nova-lite-v1:0'}`);
     console.log(`  Region:   ${awsRegion}`);
   }
-  console.log(`  LibreTranslate: ${process.env.LIBRETRANSLATE_ENDPOINT ?? 'http://localhost:5000 (default)'}\n`);
+  const translatorBackend = process.env.TRANSLATOR_BACKEND ?? 'libretranslate';
+  console.log(`  Translator: ${translatorBackend}`);
+  if (translatorBackend === 'libretranslate') {
+    console.log(`  LibreTranslate: ${process.env.LIBRETRANSLATE_ENDPOINT ?? 'http://localhost:5000 (default)'}`);
+  } else if (translatorBackend === 'amazon-translate') {
+    console.log(`  Amazon Translate region: ${awsRegion}`);
+  }
+  console.log('');
 });

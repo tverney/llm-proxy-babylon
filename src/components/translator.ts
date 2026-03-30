@@ -1,5 +1,6 @@
 import type { TranslationResult, LanguageInstructionConfig } from '../models/types.ts';
 import type { TranslatorConfig } from '../models/config.ts';
+import { TranslateClient, TranslateTextCommand } from '@aws-sdk/client-translate';
 
 /**
  * Maps BCP-47 language tags to human-readable language names
@@ -29,9 +30,15 @@ function getLanguageName(tag: string): string {
 
 export class Translator {
   private config: TranslatorConfig;
+  private translateClient?: TranslateClient;
 
   constructor(config: TranslatorConfig) {
     this.config = config;
+    if (config.backend === 'amazon-translate') {
+      this.translateClient = new TranslateClient({
+        region: config.awsRegion ?? 'us-east-1',
+      });
+    }
   }
 
   /**
@@ -92,6 +99,8 @@ export class Translator {
     switch (this.config.backend) {
       case 'libretranslate':
         return this.callLibreTranslate(text, from, to);
+      case 'amazon-translate':
+        return this.callAmazonTranslate(text, from, to);
       default:
         throw new Error(`Unsupported translator backend: ${this.config.backend}`);
     }
@@ -119,5 +128,29 @@ export class Translator {
 
     const data = (await response.json()) as { translatedText: string };
     return data.translatedText;
+  }
+
+  /**
+   * Amazon Translate API call via AWS SDK.
+   * Uses AWS credentials from the environment (IAM role, env vars, or ~/.aws/credentials).
+   */
+  private async callAmazonTranslate(text: string, from: string, to: string): Promise<string> {
+    if (!this.translateClient) {
+      throw new Error('Amazon Translate client not initialized');
+    }
+
+    const command = new TranslateTextCommand({
+      Text: text,
+      SourceLanguageCode: from,
+      TargetLanguageCode: to,
+    });
+
+    const response = await this.translateClient.send(command);
+
+    if (!response.TranslatedText) {
+      throw new Error('Amazon Translate returned empty response');
+    }
+
+    return response.TranslatedText;
   }
 }
