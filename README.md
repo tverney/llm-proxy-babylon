@@ -6,7 +6,7 @@ A lightweight HTTP proxy that sits between your application and any LLM API, sel
 
 LLMs look identical when you speak English. But the moment you switch to Thai, Vietnamese, Korean, or even Portuguese, the illusion of parity collapses.
 
-Most leading LLMs allocate over 92% of their training tokens to English. Even when models claim to be "multilingual," they're often processing poorly translated English under the hood. The result: degraded reasoning, cultural misunderstandings, and sometimes outright gibberish in non-English languages.
+Most leading LLMs allocate approximately 93% of their training tokens to English ([Brown et al., "Language Models are Few-Shot Learners", NeurIPS 2020](https://arxiv.org/abs/2005.14165)). Even when models claim to be "multilingual," they're often processing poorly translated English under the hood. The result: degraded reasoning, cultural misunderstandings, and sometimes outright gibberish in non-English languages.
 
 Of the approximately 7,000 spoken languages globally, most LLMs only cover about 50 high-resource ones. The remaining languages lack both the digital data and quality resources to benefit from recent AI advancements — creating barriers to education, healthcare, financial access, and employment for the communities that speak them. ([Frontiers Research Topic: Language Models for Low-Resource Languages](https://www.frontiersin.org/research-topics/77716/language-models-for-low-resource-languages))
 
@@ -59,7 +59,8 @@ The server starts on port 3000 by default, using AWS Bedrock with Amazon Nova Li
 | `AWS_PROFILE` | — | AWS credentials profile |
 | `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model ID |
 | `LLM_ENDPOINT` | OpenAI default | LLM endpoint (for openai provider) |
-| `LIBRETRANSLATE_ENDPOINT` | `http://localhost:5000` | LibreTranslate instance |
+| `TRANSLATOR_BACKEND` | `libretranslate` | `libretranslate` or `amazon-translate` |
+| `LIBRETRANSLATE_ENDPOINT` | `http://localhost:5000` | LibreTranslate instance (when using libretranslate backend) |
 
 ### Using with Bedrock
 
@@ -83,13 +84,22 @@ curl -s 'http://localhost:3000/v1/chat/completions' \
 
 ### Translation Backend
 
-The proxy uses LibreTranslate for prompt translation. Run it locally with Docker:
+The proxy supports two translation backends:
+
+**Amazon Translate** (recommended for production) — high-quality neural translation, handles proper nouns and technical terminology well, $15/1M characters with a 2M character/month free tier:
+
+```bash
+TRANSLATOR_BACKEND=amazon-translate AWS_PROFILE=personal npm start
+```
+
+**LibreTranslate** (free, self-hosted) — good for development and testing, run locally with Docker:
 
 ```bash
 docker run -d -p 5000:5000 libretranslate/libretranslate
+npm start
 ```
 
-English prompts skip translation entirely, so LibreTranslate is only needed for non-English input.
+English prompts skip translation entirely, so a translation backend is only needed for non-English input.
 
 ## Debug Mode
 
@@ -134,7 +144,7 @@ Client → Proxy → Language Detector → Mixed Content Parser → Content Clas
 | Mixed Content Parser | Separates translatable text from code blocks, URLs, JSON, XML — preserves them during translation |
 | Content Classifier | Classifies task type (reasoning, math, code-generation, creative-writing, culturally-specific, etc.) |
 | Routing Engine | Evaluates routing policies to decide skip/translate/hybrid per request |
-| Translator | Pluggable translation backend (LibreTranslate default), preserves placeholder tokens |
+| Translator | Pluggable translation backend (Amazon Translate, LibreTranslate), preserves placeholder tokens |
 | LLM Forwarder | Forwards to OpenAI-compatible APIs or AWS Bedrock via Converse API |
 | Shadow Evaluator | Optional parallel baseline request for quality comparison |
 | Metrics Collector | Logs decisions, latencies, and quality scores |
@@ -174,7 +184,7 @@ curl -s 'http://localhost:3000/v1/evaluate' \
 
 ## Safety Implications
 
-Research shows that 35% of responses to malicious prompts in low-resource languages can contain harmful content, compared to only 1% for high-resource languages. This gap exists because LLM safety guardrails are primarily trained on English data.
+Research shows that low-resource languages exhibit about three times the likelihood of encountering harmful content compared to high-resource languages, and in intentional attack scenarios, unsafe output rates can reach over 80% ([Deng et al., "Multilingual Jailbreak Challenges in Large Language Models", 2023](https://arxiv.org/abs/2310.06474)). This gap exists because LLM safety guardrails are primarily trained on English data.
 
 The optimizer helps close this gap as a side effect of its core design. By translating low-resource language prompts to English before sending them to the LLM, the model's safety filters see the content in the language where they're strongest. A harmful prompt in Thai or Amharic gets evaluated by English-trained guardrails operating at full strength, rather than weaker low-resource language alignment.
 
@@ -208,7 +218,7 @@ Real measurement from a Thai reasoning prompt (bubble sort complexity explanatio
 | Token savings | — | 70% fewer input tokens |
 | Quality score | 0.456 | ~0.949 (English-level) |
 
-That's 3.4x fewer input tokens and 2x better quality. At GPT-4o pricing ($2.50/1M input tokens), sending 1M Thai prompts of this size would cost ~$0.42 directly vs ~$0.12 through the optimizer.
+That's 3.4x fewer input tokens and 2x better quality. At GPT-4o pricing ($2.50/1M input tokens), sending 1M Thai prompts of this size would cost ~$0.42 directly vs ~$0.12 through the optimizer. With premium models like Claude Opus 4 on Bedrock ($15/1M input tokens), the same 1M Thai prompts would cost $2.49 directly vs $0.74 through the optimizer — a $1.75 saving per million requests on input tokens alone.
 
 The debug mode (`X-Debug: true` header) reports `tokenUsage` and `tokenSavings` per request so you can track this in production.
 
