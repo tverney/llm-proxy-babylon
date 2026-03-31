@@ -324,6 +324,87 @@ Cache defaults:
 
 Debug mode (`X-Debug: true`) includes `conversationCache` stats showing hits and misses per request.
 
+## Streaming
+
+The proxy supports true SSE streaming through the translation path for both Bedrock and OpenAI providers. The prompt is translated before the stream starts, then LLM response chunks arrive in real time.
+
+With Bedrock (uses `ConverseStreamCommand`):
+```bash
+curl -N 'http://localhost:3000/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"us.amazon.nova-lite-v1:0","messages":[{"role":"user","content":"อธิบาย recursion ในการเขียนโปรแกรม"}],"stream":true}'
+```
+
+With OpenAI:
+```bash
+curl -N 'http://localhost:3000/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer sk-your-key' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"อธิบาย recursion ในการเขียนโปรแกรม"}],"stream":true}'
+```
+
+Both return OpenAI-compatible `chat.completion.chunk` SSE events. Non-English prompts are translated to English before the stream begins, so the translation overhead only affects time-to-first-token, not the streaming throughput.
+
+## Prometheus Metrics
+
+The proxy exposes a `/v1/metrics` endpoint in Prometheus text exposition format for production monitoring.
+
+```bash
+curl -s 'http://localhost:3000/v1/metrics'
+```
+
+Tracked metrics include:
+- `llm_proxy_requests_total` — total requests processed
+- `llm_proxy_translated_total` / `llm_proxy_skipped_total` — routing decisions
+- `llm_proxy_errors_total` — pipeline errors
+- `llm_proxy_cache_hits_total` / `llm_proxy_cache_misses_total` — conversation cache performance
+- `llm_proxy_language_requests_total{language="th"}` — per-language request counts
+- `llm_proxy_language_translated_total{language="th"}` — per-language translation counts
+- `llm_proxy_language_tokens_saved_total{language="th"}` — per-language token savings
+- `llm_proxy_language_latency_ms_total{language="th"}` — per-language latency
+
+Point Grafana or any Prometheus-compatible dashboard at this endpoint to visualize cost-per-language, quality trends, and cache efficiency.
+
+## Adaptive Routing
+
+The proxy includes an adaptive routing engine that learns from shadow evaluation quality comparisons over time. Instead of relying solely on static routing rules, it automatically adjusts which language+task combinations get translated based on real quality data.
+
+How to enable:
+
+1. Enable shadow evaluation in `src/serve.ts`:
+```typescript
+const server = new ProxyServer({
+  // ... existing config
+  shadowEnabled: true,  // enables parallel baseline requests
+});
+```
+
+2. Send requests normally. For each translated request, the proxy will also send the original untranslated prompt to the LLM and compare quality scores.
+
+3. After 10+ shadow comparisons for a given language+task combination (e.g., `th+reasoning`), the adaptive router starts making recommendations:
+   - If translation consistently improves quality (avg delta > 0.05), it recommends `translate`
+   - If translation consistently hurts quality (avg delta < -0.05), it recommends `skip`
+   - If inconclusive, it defers to static routing rules
+
+4. Check the debug output to see adaptive routing in action:
+```bash
+curl -s 'http://localhost:3000/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Debug: true' \
+  -d '{"model":"us.amazon.nova-lite-v1:0","messages":[{"role":"user","content":"อธิบาย recursion"}]}'  | jq '._debug.routingReason'
+```
+
+Before enough data: `"Matched rule priority 2 → translate"`
+After learning: `"Adaptive routing: learned translate for th+general"`
+
+Configuration defaults:
+- Minimum 10 samples before making recommendations
+- 7-day decay window (older data is weighted out)
+- 100 records max per language+task combination
+- Recommendations override static rules but not cultural-specific or same-language skip logic
+
+Note: shadow evaluation doubles LLM costs for translated requests. Enable it during a calibration period, then disable once routing policies are tuned.
+
 ## Tests
 
 141 tests across 33 test files, using property-based testing with fast-check:

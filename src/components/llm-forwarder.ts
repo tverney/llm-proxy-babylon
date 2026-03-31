@@ -3,6 +3,7 @@ import type { LLMProvider } from '../models/config.ts';
 import {
   BedrockRuntimeClient,
   ConverseCommand,
+  ConverseStreamCommand,
   type Message as BedrockMessage,
   type ContentBlock,
 } from '@aws-sdk/client-bedrock-runtime';
@@ -142,9 +143,26 @@ export class LLMForwarder {
 
   /**
    * Forward a streaming request to the target LLM endpoint.
-   * Yields raw SSE chunks as they arrive from the LLM.
+   * Yields OpenAI-compatible SSE chunks. Supports both OpenAI and Bedrock.
    */
   async *forwardStream(
+    request: LLMRequest,
+    endpoint: string,
+    headers?: Record<string, string>,
+    provider?: LLMProvider,
+    awsRegion?: string,
+  ): AsyncIterable<unknown> {
+    if (provider === 'bedrock') {
+      yield* this.forwardStreamBedrock(request, awsRegion ?? 'us-east-1');
+      return;
+    }
+    yield* this.forwardStreamOpenAI(request, endpoint, headers);
+  }
+
+  /**
+   * Stream via OpenAI-compatible SSE endpoint.
+   */
+  private async *forwardStreamOpenAI(
     request: LLMRequest,
     endpoint: string,
     headers?: Record<string, string>,
@@ -192,6 +210,84 @@ export class LLMForwarder {
       }
     } finally {
       reader.releaseLock();
+    }
+  }
+
+  /**
+   * Stream via AWS Bedrock ConverseStream API.
+   * Yields OpenAI-compatible delta chunks.
+   */
+  private async *forwardStreamBedrock(
+    request: LLMRequest,
+    region: string,
+  ): AsyncIterable<unknown> {
+    const client = this.getBedrockClient(region);
+
+    const systemMessages: string[] = [];
+    const conversationMessages: BedrockMessage[] = [];
+
+    for (const msg of request.messages) {
+      if (msg.role === 'system') {
+        systemMessages.push(msg.content);
+      } else {
+        const role = msg.role === 'assistant' ? 'assistant' : 'user';
+        conversationMessages.push({
+          role,
+          content: [{ text: msg.content } as ContentBlock],
+        });
+      }
+    }
+
+    if (conversationMessages.length === 0) {
+      conversationMessages.push({
+        role: 'user',
+        content: [{ text: '' } as ContentBlock],
+      });
+    }
+
+    const command = new ConverseStreamCommand({
+      modelId: request.model,
+      messages: conversationMessages,
+      ...(systemMessages.length > 0 && {
+        system: systemMessages.map(text => ({ text })),
+      }),
+      ...(request.temperature !== undefined && {
+        inferenceConfig: {
+          temperature: request.temperature as number,
+          ...(request.max_tokens !== undefined && { maxTokens: request.max_tokens as number }),
+        },
+      }),
+    });
+
+    const response = await client.send(command);
+
+    if (!response.stream) return;
+
+    for await (const event of response.stream) {
+      if (event.contentBlockDelta?.delta?.text) {
+        // Yield OpenAI-compatible streaming chunk format
+        yield {
+          id: `bedrock-stream-${Date.now()}`,
+          object: 'chat.completion.chunk',
+          model: request.model,
+          choices: [{
+            index: 0,
+            delta: { content: event.contentBlockDelta.delta.text },
+            finish_reason: null,
+          }],
+        };
+      } else if (event.messageStop) {
+        yield {
+          id: `bedrock-stream-${Date.now()}`,
+          object: 'chat.completion.chunk',
+          model: request.model,
+          choices: [{
+            index: 0,
+            delta: {},
+            finish_reason: event.messageStop.stopReason ?? 'stop',
+          }],
+        };
+      }
     }
   }
 

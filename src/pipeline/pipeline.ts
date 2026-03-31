@@ -73,6 +73,44 @@ export class Pipeline {
   }
 
   /**
+   * Prepare a request through the pipeline (detect, parse, classify, route, translate)
+   * without forwarding to the LLM. Returns the prepared request and context.
+   * Used for streaming — the caller handles forwarding via the stream interface.
+   */
+  async prepare(request: LLMRequest, conversationId?: string): Promise<{ preparedRequest: LLMRequest; context: PipelineContext }> {
+    const requestId = uuidv4();
+    const received = Date.now();
+    const modelProfile = this.profileRegistry.get(request.model);
+    const fullText = request.messages.map((m) => m.content).join('\n');
+
+    const detection = this.detector.detect(fullText);
+    const detectionDone = Date.now();
+    const parsedContent = this.parser.parse(fullText);
+    const parsingDone = Date.now();
+    const classification = this.classifier.classify(fullText);
+    const classificationDone = Date.now();
+    const routingDecision = this.routingEngine.evaluate(detection, classification, modelProfile);
+    const routingDone = Date.now();
+
+    const ctx: PipelineContext = {
+      requestId, originalRequest: request, detection, parsedContent,
+      classification, routingDecision, modelProfile,
+      timestamps: { received, detectionDone, parsingDone, classificationDone, routingDone, llmResponseReceived: 0, completed: 0 },
+    };
+
+    let finalRequest: LLMRequest;
+    if (routingDecision.action === 'skip') {
+      finalRequest = request;
+    } else if (routingDecision.action === 'translate') {
+      finalRequest = await this.handleTranslate(request, ctx, modelProfile, conversationId);
+    } else {
+      finalRequest = await this.handleHybrid(request, ctx, modelProfile);
+    }
+
+    return { preparedRequest: finalRequest, context: ctx };
+  }
+
+  /**
    * Process a single LLM request through the full pipeline:
    * detect → parse → classify → route → translate + inject language instruction → forward → respond
    */
@@ -219,8 +257,8 @@ export class Pipeline {
       );
 
       ctx.timestamps.translationDone = Date.now();
-      (ctx as Record<string, unknown>).translationCacheHits = cacheHits;
-      (ctx as Record<string, unknown>).translationCacheMisses = cacheMisses;
+      ctx.translationCacheHits = cacheHits;
+      ctx.translationCacheMisses = cacheMisses;
 
       // Build language instruction
       const instruction = this.translator.buildLanguageInstruction(originalLang, instructionConfig);
