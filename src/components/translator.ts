@@ -1,6 +1,7 @@
 import type { TranslationResult, LanguageInstructionConfig } from '../models/types.ts';
 import type { TranslatorConfig } from '../models/config.ts';
 import { TranslateClient, TranslateTextCommand } from '@aws-sdk/client-translate';
+import { GlobalTranslationCache } from './global-translation-cache.ts';
 
 /**
  * Maps BCP-47 language tags to human-readable language names
@@ -31,9 +32,11 @@ function getLanguageName(tag: string): string {
 export class Translator {
   private config: TranslatorConfig;
   private translateClient?: TranslateClient;
+  private globalCache: GlobalTranslationCache;
 
-  constructor(config: TranslatorConfig) {
+  constructor(config: TranslatorConfig, globalCache?: GlobalTranslationCache) {
     this.config = config;
+    this.globalCache = globalCache ?? new GlobalTranslationCache();
     if (config.backend === 'amazon-translate') {
       this.translateClient = new TranslateClient({
         region: config.awsRegion ?? 'us-east-1',
@@ -46,6 +49,12 @@ export class Translator {
    * On failure, returns the original text and logs a warning (Req 5.3).
    */
   async translate(text: string, from: string, to: string): Promise<TranslationResult> {
+    // Check global cache first
+    const cached = this.globalCache.get(text, from, to);
+    if (cached !== null) {
+      return { translatedText: cached, sourceLanguage: from, targetLanguage: to };
+    }
+
     // Extract placeholders before translation to preserve them (Req 5.2)
     const placeholders: Array<{ token: string; index: number }> = [];
     let sanitized = text;
@@ -67,6 +76,9 @@ export class Translator {
         result = result.replace(`__PHTK${index}__`, token);
       }
 
+      // Store in global cache
+      this.globalCache.set(text, from, to, result);
+
       return { translatedText: result, sourceLanguage: from, targetLanguage: to };
     } catch (err) {
       console.warn(`[Translator] Translation failed (${from} → ${to}): ${err instanceof Error ? err.message : String(err)}`);
@@ -80,6 +92,13 @@ export class Translator {
    */
   async translateBatch(texts: string[], from: string, to: string): Promise<TranslationResult[]> {
     return Promise.all(texts.map(t => this.translate(t, from, to)));
+  }
+
+  /**
+   * Get global translation cache statistics.
+   */
+  getGlobalCacheStats() {
+    return this.globalCache.getStats();
   }
 
   /**
