@@ -7,77 +7,139 @@ import type {
 import { AdaptiveRouter } from './adaptive-router.ts';
 
 /**
- * RoutingEngine evaluates routing policies against language detection,
- * task classification, and model profile to decide whether and how
- * to translate a prompt.
+ * A routing resolver is a single step in the resolution chain.
+ * It either returns a RoutingDecision or null to defer to the next resolver.
+ */
+export type RoutingResolver = (ctx: RoutingContext) => RoutingDecision | null;
+
+/**
+ * Context passed through the resolution chain.
+ */
+export interface RoutingContext {
+  detection: LanguageDetectionResult;
+  classification: ClassificationResult;
+  modelProfile: ModelProfile;
+  originalLang: string;
+  optimalLang: string;
+}
+
+/**
+ * Trace entry for debugging — shows which resolvers were evaluated and what they decided.
+ */
+export interface RoutingTraceEntry {
+  resolver: string;
+  result: 'decided' | 'deferred';
+  decision?: RoutingDecision;
+}
+
+/**
+ * RoutingEngine evaluates a chain of resolvers to decide whether and how
+ * to translate a prompt. Each resolver either returns a decision or defers
+ * to the next one in the chain.
  *
- * Decision order:
+ * Default resolution chain:
  * 1. Undetermined language → skip
  * 2. Same language as optimal → skip
- * 3. Culturally-specific with confidence > 0.8 → skip
- * 4. Evaluate policy rules in priority order (lowest first), apply first match
- * 5. No match → skip
+ * 3. Culturally-specific override → skip
+ * 4. Adaptive learned data → translate/skip based on quality history
+ * 5. Static routing rules → first matching rule
+ * 6. Default → skip
  */
 export class RoutingEngine {
+  private chain: Array<{ name: string; resolver: RoutingResolver }> = [];
   private rules: RoutingPolicyRule[] = [];
   private adaptiveRouter?: AdaptiveRouter;
+  private lastTrace: RoutingTraceEntry[] = [];
 
   constructor(policy?: RoutingPolicy, adaptiveRouter?: AdaptiveRouter) {
     if (policy) {
       this.rules = sortByPriority(policy.rules);
     }
     this.adaptiveRouter = adaptiveRouter;
+    this.buildDefaultChain();
   }
 
+  /**
+   * Build the default resolution chain.
+   */
+  private buildDefaultChain(): void {
+    this.chain = [
+      { name: 'undetermined', resolver: resolveUndetermined },
+      { name: 'same-language', resolver: resolveSameLanguage },
+      { name: 'cultural-override', resolver: resolveCulturalOverride },
+      { name: 'adaptive', resolver: (ctx) => this.resolveAdaptive(ctx) },
+      { name: 'static-rules', resolver: (ctx) => this.resolveStaticRules(ctx) },
+      { name: 'default', resolver: resolveDefault },
+    ];
+  }
+
+  /**
+   * Evaluate the resolution chain. Returns the first non-null decision.
+   * Builds a trace of which resolvers were consulted.
+   */
   evaluate(
     detection: LanguageDetectionResult,
     classification: ClassificationResult,
     modelProfile: ModelProfile
   ): RoutingDecision {
-    // Undetermined language → skip
-    if (detection.isUndetermined) {
-      return skip('Language is undetermined; skipping translation');
-    }
+    const ctx: RoutingContext = {
+      detection,
+      classification,
+      modelProfile,
+      originalLang: detection.primary.tag,
+      optimalLang: modelProfile.defaultOptimalLanguage,
+    };
 
-    const originalLang = detection.primary.tag;
-    const optimalLang = modelProfile.defaultOptimalLanguage;
+    this.lastTrace = [];
 
-    // Same-language skip (Req 4.1)
-    if (originalLang === optimalLang) {
-      return skip(`Original language "${originalLang}" matches optimal language`);
-    }
-
-    // Culturally-specific override (Req 3.3)
-    const culturalEntry = classification.categories.find(
-      (c) => c.category === 'culturally-specific'
-    );
-    if (culturalEntry && culturalEntry.confidence > 0.8) {
-      return skip(
-        `Culturally-specific content (confidence ${culturalEntry.confidence}); keeping original language`
-      );
-    }
-
-    // Adaptive routing: check learned recommendations before static rules
-    if (this.adaptiveRouter) {
-      const recommendation = this.adaptiveRouter.getRecommendation(
-        originalLang,
-        classification.primaryCategory,
-      );
-      if (recommendation) {
-        const targetLang = recommendation === 'skip' ? null : optimalLang;
-        return {
-          action: recommendation,
-          optimalLanguage: targetLang,
-          matchedRule: null,
-          reason: `Adaptive routing: learned "${recommendation}" for ${originalLang}+${classification.primaryCategory}`,
-        };
+    for (const { name, resolver } of this.chain) {
+      const decision = resolver(ctx);
+      if (decision) {
+        this.lastTrace.push({ resolver: name, result: 'decided', decision });
+        return decision;
       }
+      this.lastTrace.push({ resolver: name, result: 'deferred' });
     }
 
-    // Evaluate policy rules in priority order (Req 4.3)
+    // Should never reach here — default resolver always returns
+    return skip('Resolution chain exhausted; defaulting to skip');
+  }
+
+  /**
+   * Get the trace from the last evaluate() call.
+   * Shows which resolvers were consulted and which one made the decision.
+   */
+  getLastTrace(): RoutingTraceEntry[] {
+    return [...this.lastTrace];
+  }
+
+  /**
+   * Adaptive resolver — checks learned recommendations.
+   */
+  private resolveAdaptive(ctx: RoutingContext): RoutingDecision | null {
+    if (!this.adaptiveRouter) return null;
+
+    const recommendation = this.adaptiveRouter.getRecommendation(
+      ctx.originalLang,
+      ctx.classification.primaryCategory,
+    );
+    if (!recommendation) return null;
+
+    return {
+      action: recommendation,
+      optimalLanguage: recommendation === 'skip' ? null : ctx.optimalLang,
+      matchedRule: null,
+      reason: `Adaptive routing: learned "${recommendation}" for ${ctx.originalLang}+${ctx.classification.primaryCategory}`,
+    };
+  }
+
+  /**
+   * Static rules resolver — evaluates policy rules in priority order.
+   */
+  private resolveStaticRules(ctx: RoutingContext): RoutingDecision | null {
     for (const rule of this.rules) {
-      if (ruleMatches(rule, detection, classification, modelProfile)) {
-        const targetLang = rule.targetLanguage ?? optimalLang;
+      if (ruleMatches(rule, ctx.detection, ctx.classification, ctx.modelProfile)) {
+        const targetLang = rule.targetLanguage ?? ctx.optimalLang;
         return {
           action: rule.action,
           optimalLanguage: rule.action === 'skip' ? null : targetLang,
@@ -86,9 +148,7 @@ export class RoutingEngine {
         };
       }
     }
-
-    // No match → skip (Req 4.4)
-    return skip('No routing rule matched; defaulting to skip');
+    return null;
   }
 
   reloadPolicies(policy: RoutingPolicy): void {
@@ -97,7 +157,40 @@ export class RoutingEngine {
 }
 
 
-// ── helpers ──────────────────────────────────────────────────────────
+// ── Built-in resolvers ──────────────────────────────────────────────
+
+function resolveUndetermined(ctx: RoutingContext): RoutingDecision | null {
+  if (ctx.detection.isUndetermined) {
+    return skip('Language is undetermined; skipping translation');
+  }
+  return null;
+}
+
+function resolveSameLanguage(ctx: RoutingContext): RoutingDecision | null {
+  if (ctx.originalLang === ctx.optimalLang) {
+    return skip(`Original language "${ctx.originalLang}" matches optimal language`);
+  }
+  return null;
+}
+
+function resolveCulturalOverride(ctx: RoutingContext): RoutingDecision | null {
+  const culturalEntry = ctx.classification.categories.find(
+    (c) => c.category === 'culturally-specific'
+  );
+  if (culturalEntry && culturalEntry.confidence > 0.8) {
+    return skip(
+      `Culturally-specific content (confidence ${culturalEntry.confidence}); keeping original language`
+    );
+  }
+  return null;
+}
+
+function resolveDefault(_ctx: RoutingContext): RoutingDecision | null {
+  return skip('No routing rule matched; defaulting to skip');
+}
+
+
+// ── Helpers ──────────────────────────────────────────────────────────
 
 function skip(reason: string): RoutingDecision {
   return { action: 'skip', optimalLanguage: null, matchedRule: null, reason };
@@ -107,10 +200,6 @@ function sortByPriority(rules: RoutingPolicyRule[]): RoutingPolicyRule[] {
   return [...rules].sort((a, b) => a.priority - b.priority);
 }
 
-/**
- * Returns true when a rule's match conditions are all satisfied.
- * Omitted conditions are treated as "match any".
- */
 function ruleMatches(
   rule: RoutingPolicyRule,
   detection: LanguageDetectionResult,
@@ -119,20 +208,17 @@ function ruleMatches(
 ): boolean {
   const { matchConditions } = rule;
 
-  // Task-type filter
   if (matchConditions.taskTypes && matchConditions.taskTypes.length > 0) {
     const classifiedTypes = classification.categories.map((c) => c.category);
     const hasMatch = matchConditions.taskTypes.some((t) => classifiedTypes.includes(t));
     if (!hasMatch) return false;
   }
 
-  // Source-language pattern (regex)
   if (matchConditions.sourceLanguagePattern) {
     const re = new RegExp(matchConditions.sourceLanguagePattern);
     if (!re.test(detection.primary.tag)) return false;
   }
 
-  // Model-ID pattern (regex)
   if (matchConditions.modelIdPattern) {
     const re = new RegExp(matchConditions.modelIdPattern);
     if (!re.test(modelProfile.modelId)) return false;

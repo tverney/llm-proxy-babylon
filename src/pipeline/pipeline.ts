@@ -112,6 +112,13 @@ export class Pipeline {
   }
 
   /**
+   * Get the routing trace from the last evaluate() call.
+   */
+  getLastRoutingTrace() {
+    return this.routingEngine.getLastTrace();
+  }
+
+  /**
    * Process a single LLM request through the full pipeline:
    * detect → parse → classify → route → translate + inject language instruction → forward → respond
    */
