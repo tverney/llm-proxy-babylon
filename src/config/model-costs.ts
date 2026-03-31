@@ -130,3 +130,51 @@ export function calculateCost(
     modelId,
   };
 }
+
+// ── Formatting ──────────────────────────────────────────────────────
+
+/**
+ * Format a USD cost for human-readable display.
+ * - >= $1.00     → "$1.23"
+ * - >= $0.01     → "$0.05"
+ * - >= $0.001    → "$0.0034"
+ * - >= $0.000001 → "$0.000012"
+ * - < $0.000001  → "< $0.000001"
+ * - 0            → "$0.00"
+ */
+export function formatCostUSD(amount: number): string {
+  if (amount === 0) return '$0.00';
+  if (amount < 0.000001) return '< $0.000001';
+  if (amount < 0.001) return `$${amount.toFixed(6)}`;
+  if (amount < 0.01) return `$${amount.toFixed(4)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
+/**
+ * Format a model's pricing tier for display.
+ * e.g. "$0.06/$0.24 per Mtok"
+ */
+export function formatModelPricing(tier: CostTier): string {
+  const fmtInput = tier.inputPer1M >= 1 ? `$${tier.inputPer1M}` : `$${tier.inputPer1M}`;
+  const fmtOutput = tier.outputPer1M >= 1 ? `$${tier.outputPer1M}` : `$${tier.outputPer1M}`;
+  return `${fmtInput}/${fmtOutput} per Mtok`;
+}
+
+/**
+ * Format a full cost breakdown for display.
+ */
+export function formatCostBreakdown(cost: CostBreakdown): {
+  input: string;
+  output: string;
+  total: string;
+  saved: string;
+  pricing: string;
+} {
+  return {
+    input: formatCostUSD(cost.inputCostUSD),
+    output: formatCostUSD(cost.outputCostUSD),
+    total: formatCostUSD(cost.totalCostUSD),
+    saved: formatCostUSD(cost.savedInputCostUSD),
+    pricing: formatModelPricing(cost.tier),
+  };
+}

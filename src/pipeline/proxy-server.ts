@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import type { LLMRequest } from '../models/types.ts';
 import type { ModelProfile, RoutingPolicy, TranslatorConfig } from '../models/config.ts';
+import { formatCostUSD, formatModelPricing, getModelCostTier } from '../config/model-costs.ts';
 import { Pipeline } from './pipeline.ts';
 import { LanguageDetector } from '../components/language-detector.ts';
 import { MixedContentParser } from '../components/mixed-content-parser.ts';
@@ -166,7 +167,16 @@ export class ProxyServer {
               baselineResponse,
               tokenUsage: context.tokenUsage ?? null,
               tokenSavings: context.tokenSavings ?? null,
-              costEstimate: context.costEstimate ?? null,
+              costEstimate: context.costEstimate ? {
+                ...context.costEstimate,
+                formatted: {
+                  input: formatCostUSD(context.costEstimate.inputCostUSD),
+                  output: formatCostUSD(context.costEstimate.outputCostUSD),
+                  total: formatCostUSD(context.costEstimate.totalCostUSD),
+                  saved: formatCostUSD(context.costEstimate.savedInputCostUSD),
+                  modelPricing: formatModelPricing(getModelCostTier(llmRequest.model)),
+                },
+              } : null,
               conversationCache: conversationId ? {
                 conversationId,
                 cacheHits: context.translationCacheHits ?? 0,

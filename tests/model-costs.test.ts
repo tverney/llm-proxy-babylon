@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getModelCostTier, calculateCost, COST_TIERS } from '../src/config/model-costs.ts';
+import { getModelCostTier, calculateCost, COST_TIERS, formatCostUSD, formatModelPricing, formatCostBreakdown } from '../src/config/model-costs.ts';
 
 describe('Model Cost Tracking', () => {
   describe('getModelCostTier', () => {
@@ -79,3 +79,54 @@ describe('Model Cost Tracking', () => {
     });
   });
 });
+
+  describe('formatCostUSD', () => {
+    it('formats zero', () => {
+      expect(formatCostUSD(0)).toBe('$0.00');
+    });
+
+    it('formats >= $1', () => {
+      expect(formatCostUSD(1.234)).toBe('$1.23');
+      expect(formatCostUSD(15.5)).toBe('$15.50');
+    });
+
+    it('formats >= $0.01', () => {
+      expect(formatCostUSD(0.05)).toBe('$0.05');
+      expect(formatCostUSD(0.0123)).toBe('$0.01');
+    });
+
+    it('formats >= $0.001', () => {
+      expect(formatCostUSD(0.0034)).toBe('$0.0034');
+    });
+
+    it('formats >= $0.000001', () => {
+      expect(formatCostUSD(0.000012)).toBe('$0.000012');
+      expect(formatCostUSD(0.00000114)).toBe('$0.000001');
+    });
+
+    it('formats very small amounts', () => {
+      expect(formatCostUSD(0.0000001)).toBe('< $0.000001');
+    });
+  });
+
+  describe('formatModelPricing', () => {
+    it('formats Nova Lite pricing', () => {
+      expect(formatModelPricing(COST_TIERS.NOVA_LITE)).toBe('$0.06/$0.24 per Mtok');
+    });
+
+    it('formats Opus 4 pricing', () => {
+      expect(formatModelPricing(COST_TIERS.CLAUDE_OPUS_4)).toBe('$15/$75 per Mtok');
+    });
+  });
+
+  describe('formatCostBreakdown', () => {
+    it('formats a full breakdown', () => {
+      const cost = calculateCost('us.amazon.nova-lite-v1:0', 49, 850, 117);
+      const formatted = formatCostBreakdown(cost);
+      expect(formatted.input).toMatch(/^\$/);
+      expect(formatted.output).toMatch(/^\$/);
+      expect(formatted.total).toMatch(/^\$/);
+      expect(formatted.saved).toMatch(/^\$/);
+      expect(formatted.pricing).toContain('per Mtok');
+    });
+  });
