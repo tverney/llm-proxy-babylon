@@ -147,9 +147,16 @@ Based on our testing:
 | Scenario | Translation Helps? | Why |
 |---|---|---|
 | Thai reasoning → Mistral 7B | ✅ Yes | Model can't reason in Thai, English path dramatically better |
+| Korean reasoning → Nova Lite | ✅ Yes | Quality jumped from 0.663 to 0.949 on technical prompts |
+| Japanese math → Nova Lite | ✅ Yes | Model struggles with math notation in Japanese, English path cleaner |
+| Arabic code-gen → smaller models | ✅ Yes | RTL script + code mixing confuses weaker models, English normalizes it |
+| Hindi reasoning → Mistral 7B | ✅ Yes | English-centric model, translation unlocks full reasoning capability |
+| Portuguese reasoning → Mistral 7B | ✅ Yes | Handles basic Portuguese but struggles with multi-step logic, English path improves reasoning |
 | Portuguese factual → Nova Lite | ❌ No | Nova Lite handles Portuguese well, translation adds noise |
 | Vietnamese logic puzzle → Nova Lite | ❌ No | LibreTranslate mangled proper nouns, lost constraints |
 | Portuguese local knowledge → Nova Lite | ❌ No | Culturally-specific query, should skip translation |
+| Spanish creative writing → Nova Lite | ❌ No | Creative tone and style lost in translation |
+| English prompts (any model) | ⏭️ Skip | Already in optimal language, no translation needed |
 
 The optimizer works best when:
 - The model is weak in the input language (smaller models, low-resource languages)
