@@ -10,6 +10,7 @@ import type {
   TokenSavings,
 } from '../models/types.ts';
 import type { ModelProfile } from '../models/config.ts';
+import { calculateCost } from '../config/model-costs.ts';
 import { LanguageDetector } from '../components/language-detector.ts';
 import { MixedContentParser } from '../components/mixed-content-parser.ts';
 import { ContentClassifier } from '../components/content-classifier.ts';
@@ -188,6 +189,22 @@ export class Pipeline {
     // Compute token savings when translation was applied
     if (routingDecision.action !== 'skip' && ctx.tokenUsage) {
       ctx.tokenSavings = this.computeTokenSavings(request, ctx.tokenUsage);
+    }
+
+    // Compute cost estimate
+    if (ctx.tokenUsage) {
+      const cost = calculateCost(
+        request.model,
+        ctx.tokenUsage.promptTokens,
+        ctx.tokenUsage.completionTokens,
+        ctx.tokenSavings?.tokensSaved,
+      );
+      ctx.costEstimate = {
+        inputCostUSD: cost.inputCostUSD,
+        outputCostUSD: cost.outputCostUSD,
+        totalCostUSD: cost.totalCostUSD,
+        savedInputCostUSD: cost.savedInputCostUSD,
+      };
     }
 
     // 7. Shadow evaluation (if enabled for matched rule)
