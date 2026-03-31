@@ -159,6 +159,7 @@ export class ProxyServer {
               taskType: context.classification.primaryCategory,
               routingDecision: context.routingDecision.action,
               routingReason: context.routingDecision.reason,
+              routingTrace: this.pipeline.getLastRoutingTrace(),
               optimalLanguage: context.routingDecision.optimalLanguage,
               translatedPrompt: context.translatedPrompt ?? null,
               languageInstruction: context.languageInstruction ?? null,
