@@ -68,6 +68,7 @@ export class ProxyServer {
     this.registerChatCompletionsRoute();
     this.registerEvaluateRoute();
     this.registerMetricsRoute();
+    this.registerFeatureFlagsRoutes();
   }
 
   private registerChatCompletionsRoute(): void {
@@ -313,6 +314,52 @@ export class ProxyServer {
     this.app.get('/v1/metrics', async (_request: FastifyRequest, reply: FastifyReply) => {
       reply.header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
       return reply.send(this.prometheus.export());
+    });
+  }
+
+  private registerFeatureFlagsRoutes(): void {
+    const flags = this.pipeline.getFeatureFlags();
+
+    // List active rules
+    this.app.get('/v1/features', async (_request: FastifyRequest, reply: FastifyReply) => {
+      return reply.send({ rules: flags.getRules() });
+    });
+
+    // Add a rule
+    this.app.post('/v1/features', async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body as Record<string, unknown> | null;
+      if (!body || typeof body !== 'object') {
+        return reply.status(400).send({ error: { message: 'Request body must be a JSON object' } });
+      }
+      if (!body.id || typeof body.id !== 'string') {
+        return reply.status(400).send({ error: { message: 'Missing required field: id' } });
+      }
+      if (!body.feature || typeof body.feature !== 'string') {
+        return reply.status(400).send({ error: { message: 'Missing required field: feature' } });
+      }
+      if (typeof body.enabled !== 'boolean') {
+        return reply.status(400).send({ error: { message: 'Missing required field: enabled (boolean)' } });
+      }
+
+      flags.addRule({
+        id: body.id as string,
+        feature: body.feature as string,
+        enabled: body.enabled as boolean,
+        conditions: body.conditions as { languages?: string[]; tenants?: string[]; taskTypes?: string[] } | undefined,
+        expiresAt: typeof body.expiresAt === 'number' ? body.expiresAt : undefined,
+      });
+
+      return reply.status(201).send({ message: 'Rule added', rules: flags.getRules() });
+    });
+
+    // Delete a rule
+    this.app.delete('/v1/features/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+      const { id } = request.params as { id: string };
+      const removed = flags.removeRule(id);
+      if (!removed) {
+        return reply.status(404).send({ error: { message: `Rule "${id}" not found` } });
+      }
+      return reply.send({ message: 'Rule removed', rules: flags.getRules() });
     });
   }
 

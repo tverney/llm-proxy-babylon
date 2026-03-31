@@ -21,6 +21,7 @@ import { MetricsCollector } from '../components/metrics-collector.ts';
 import { ShadowEvaluator } from '../components/shadow-evaluator.ts';
 import { ModelProfileRegistry } from '../config/model-profile-loader.ts';
 import { ConversationCache } from '../components/conversation-cache.ts';
+import { FeatureFlags } from '../components/feature-flags.ts';
 
 export interface PipelineConfig {
   defaultLanguageInstructionConfig: LanguageInstructionConfig;
@@ -42,6 +43,7 @@ export class Pipeline {
   private shadowEvaluator: ShadowEvaluator;
   private profileRegistry: ModelProfileRegistry;
   private conversationCache: ConversationCache;
+  private featureFlags: FeatureFlags;
   private config: PipelineConfig;
 
   constructor(opts: {
@@ -55,6 +57,7 @@ export class Pipeline {
     shadowEvaluator: ShadowEvaluator;
     profileRegistry: ModelProfileRegistry;
     conversationCache?: ConversationCache;
+    featureFlags?: FeatureFlags;
     config?: Partial<PipelineConfig>;
   }) {
     this.detector = opts.detector;
@@ -67,6 +70,7 @@ export class Pipeline {
     this.shadowEvaluator = opts.shadowEvaluator;
     this.profileRegistry = opts.profileRegistry;
     this.conversationCache = opts.conversationCache ?? new ConversationCache();
+    this.featureFlags = opts.featureFlags ?? new FeatureFlags();
     this.config = {
       defaultLanguageInstructionConfig:
         opts.config?.defaultLanguageInstructionConfig ?? DEFAULT_LANGUAGE_INSTRUCTION_CONFIG,
@@ -116,6 +120,13 @@ export class Pipeline {
    */
   getLastRoutingTrace() {
     return this.routingEngine.getLastTrace();
+  }
+
+  /**
+   * Get the feature flags instance for runtime management.
+   */
+  getFeatureFlags(): FeatureFlags {
+    return this.featureFlags;
   }
 
   /**
@@ -214,11 +225,15 @@ export class Pipeline {
       };
     }
 
-    // 7. Shadow evaluation (if enabled for matched rule)
+    // 7. Shadow evaluation (if enabled for matched rule AND feature flag allows it)
     let qualityComparison: QualityComparison | undefined;
+    const shadowFeatureEnabled = this.featureFlags.isEnabled('shadow-evaluation', {
+      language: detection.primary.tag,
+      taskType: classification.primaryCategory,
+    });
     if (
       routingDecision.action !== 'skip' &&
-      this.shadowEvaluator.isEnabled(routingDecision.matchedRule)
+      (this.shadowEvaluator.isEnabled(routingDecision.matchedRule) || shadowFeatureEnabled)
     ) {
       try {
         qualityComparison = await this.shadowEvaluator.evaluate(
