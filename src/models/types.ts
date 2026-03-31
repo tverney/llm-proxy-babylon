@@ -153,6 +153,8 @@ export interface PipelineContext {
   qualityComparison?: QualityComparison;
   tokenUsage?: TokenUsage;
   tokenSavings?: TokenSavings;
+  translationCacheHits?: number;
+  translationCacheMisses?: number;
   timestamps: {
     received: number;
     detectionDone: number;

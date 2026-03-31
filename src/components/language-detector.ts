@@ -37,6 +37,17 @@ export class LanguageDetector {
       return this.undetermined();
     }
 
+    // Script-based pre-detection for unambiguous scripts.
+    // Overrides franc when the dominant script uniquely identifies a language.
+    const scriptLang = this.detectByScript(naturalText);
+    if (scriptLang) {
+      return {
+        primary: { tag: scriptLang, confidence: 1 },
+        all: [{ tag: scriptLang, confidence: 1 }],
+        isUndetermined: false,
+      };
+    }
+
     const results = francAll(text);
 
     // franc returns [["und", 1]] when it can't determine
@@ -70,6 +81,60 @@ export class LanguageDetector {
       all: detected,
       isUndetermined: false,
     };
+  }
+
+  /**
+   * Detect language by dominant Unicode script.
+   * Returns a BCP-47 tag if the text is dominated by a script that uniquely
+   * identifies a language. Returns null if the script is ambiguous (e.g. Latin).
+   */
+  private detectByScript(text: string): string | null {
+    const counts: Record<string, number> = {};
+    let total = 0;
+
+    for (const char of text) {
+      const code = char.codePointAt(0) ?? 0;
+      if (code <= 0x7F) continue; // skip ASCII (Latin, digits, punctuation)
+
+      let script: string | null = null;
+      if (code >= 0x0E00 && code <= 0x0E7F) script = 'th';       // Thai
+      else if (code >= 0x0900 && code <= 0x097F) script = 'hi';   // Devanagari (Hindi)
+      else if (code >= 0xAC00 && code <= 0xD7AF) script = 'ko';   // Korean Hangul
+      else if (code >= 0x1100 && code <= 0x11FF) script = 'ko';   // Korean Jamo
+      else if (code >= 0x3040 && code <= 0x309F) script = 'ja';   // Hiragana
+      else if (code >= 0x30A0 && code <= 0x30FF) script = 'ja';   // Katakana
+      else if (code >= 0x0600 && code <= 0x06FF) script = 'ar';   // Arabic
+      else if (code >= 0x0980 && code <= 0x09FF) script = 'bn';   // Bengali
+      else if (code >= 0x0A80 && code <= 0x0AFF) script = 'gu';   // Gujarati
+      else if (code >= 0x0B80 && code <= 0x0BFF) script = 'ta';   // Tamil
+      else if (code >= 0x0C00 && code <= 0x0C7F) script = 'te';   // Telugu
+      else if (code >= 0x0400 && code <= 0x04FF) script = 'ru';   // Cyrillic (default to Russian)
+      else if (code >= 0x10A0 && code <= 0x10FF) script = 'ka';   // Georgian
+
+      if (script) {
+        counts[script] = (counts[script] ?? 0) + 1;
+        total++;
+      }
+    }
+
+    if (total === 0) return null;
+
+    // Find the dominant script
+    let maxScript: string | null = null;
+    let maxCount = 0;
+    for (const [script, count] of Object.entries(counts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        maxScript = script;
+      }
+    }
+
+    // Only override if the dominant script accounts for >50% of non-ASCII chars
+    if (maxScript && maxCount / total > 0.5) {
+      return maxScript;
+    }
+
+    return null;
   }
 
   private undetermined(): LanguageDetectionResult {

@@ -12,6 +12,7 @@ import { MetricsCollector } from '../components/metrics-collector.ts';
 import { ShadowEvaluator } from '../components/shadow-evaluator.ts';
 import { ModelProfileRegistry } from '../config/model-profile-loader.ts';
 import { MultilingualEvaluator } from '../components/multilingual-evaluator.ts';
+import { PrometheusExporter } from '../components/prometheus-exporter.ts';
 
 export interface ProxyServerConfig {
   modelProfiles: ModelProfile[];
@@ -27,6 +28,7 @@ export class ProxyServer {
   private forwarder: LLMForwarder;
   private profileRegistry: ModelProfileRegistry;
   private evaluator: MultilingualEvaluator;
+  private prometheus: PrometheusExporter;
 
   constructor(config: ProxyServerConfig) {
     this.app = Fastify({ logger: false });
@@ -44,6 +46,8 @@ export class ProxyServer {
     this.evaluator = new MultilingualEvaluator({
       translatorConfig: config.translatorConfig,
     });
+
+    this.prometheus = new PrometheusExporter();
 
     this.pipeline = new Pipeline({
       detector,
@@ -63,6 +67,7 @@ export class ProxyServer {
   private registerRoutes(): void {
     this.registerChatCompletionsRoute();
     this.registerEvaluateRoute();
+    this.registerMetricsRoute();
   }
 
   private registerChatCompletionsRoute(): void {
@@ -97,12 +102,28 @@ export class ProxyServer {
 
       // Streaming mode (Req 13.4)
       if (llmRequest.stream) {
-        return this.handleStream(llmRequest, reply);
+        return this.handleStream(llmRequest, reply, upstreamHeaders, conversationId);
       }
 
       // Synchronous mode
       try {
         const { response, context } = await this.pipeline.process(llmRequest, upstreamHeaders, conversationId);
+
+        // Record prometheus metrics
+        this.prometheus.record({
+          requestId: context.requestId,
+          detectedLanguage: context.detection.primary.tag,
+          taskType: context.classification.primaryCategory,
+          routingDecision: context.routingDecision.action,
+          targetLanguage: context.routingDecision.optimalLanguage,
+          translationLatencyMs: context.timestamps.translationDone
+            ? context.timestamps.translationDone - context.timestamps.routingDone : 0,
+          totalLatencyMs: context.timestamps.completed - context.timestamps.received,
+          promptTokens: context.tokenUsage?.promptTokens,
+          savedTokens: context.tokenSavings?.tokensSaved,
+          cacheHits: context.translationCacheHits,
+          cacheMisses: context.translationCacheMisses,
+        });
 
         // Debug mode: include pipeline context when X-Debug header is present
         const debug = request.headers['x-debug'] === 'true';
@@ -146,8 +167,8 @@ export class ProxyServer {
               tokenSavings: context.tokenSavings ?? null,
               conversationCache: conversationId ? {
                 conversationId,
-                cacheHits: (context as Record<string, unknown>).translationCacheHits ?? 0,
-                cacheMisses: (context as Record<string, unknown>).translationCacheMisses ?? 0,
+                cacheHits: context.translationCacheHits ?? 0,
+                cacheMisses: context.translationCacheMisses ?? 0,
               } : null,
               timestamps: {
                 totalMs: context.timestamps.completed - context.timestamps.received,
@@ -166,6 +187,7 @@ export class ProxyServer {
         // Propagate LLM error status codes (Req 6.3)
         return reply.status(response.statusCode).send(response.raw);
       } catch (err) {
+        this.prometheus.recordError();
         return reply.status(502).send({
           error: { message: `Pipeline error: ${err instanceof Error ? err.message : String(err)}` },
         });
@@ -241,20 +263,39 @@ export class ProxyServer {
     });
   }
 
-  private async handleStream(request: LLMRequest, reply: FastifyReply): Promise<void> {
-    // For streaming, we still run the pipeline for detection/routing/translation,
-    // then stream the LLM response back using the forwarder's stream method.
-    // Since Pipeline.process() handles the full flow synchronously, we use it
-    // and return the raw response. True SSE streaming would require exposing
-    // the forwarder's stream interface through the pipeline — for now we return
-    // the synchronous response to maintain correctness.
+  private async handleStream(request: LLMRequest, reply: FastifyReply, upstreamHeaders?: Record<string, string>, conversationId?: string): Promise<void> {
     try {
-      const { response } = await this.pipeline.process({ ...request, stream: true });
-      reply.status(response.statusCode).send(response.raw);
-    } catch (err) {
-      reply.status(502).send({
-        error: { message: `Pipeline error: ${err instanceof Error ? err.message : String(err)}` },
+      // Run the pipeline up to translation, then stream the LLM response
+      const { preparedRequest, context } = await this.pipeline.prepare(request, conversationId);
+
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
       });
+
+      const streamRequest = { ...preparedRequest, stream: true };
+      for await (const chunk of this.forwarder.forwardStream(
+        streamRequest,
+        context.modelProfile.endpoint,
+        upstreamHeaders,
+        context.modelProfile.provider,
+        context.modelProfile.awsRegion,
+      )) {
+        const data = typeof chunk === 'string' ? chunk : JSON.stringify(chunk);
+        reply.raw.write(`data: ${data}\n\n`);
+      }
+
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+    } catch (err) {
+      if (!reply.raw.headersSent) {
+        reply.status(502).send({
+          error: { message: `Pipeline error: ${err instanceof Error ? err.message : String(err)}` },
+        });
+      } else {
+        reply.raw.end();
+      }
     }
   }
 
@@ -264,6 +305,13 @@ export class ProxyServer {
 
   async stop(): Promise<void> {
     await this.app.close();
+  }
+
+  private registerMetricsRoute(): void {
+    this.app.get('/v1/metrics', async (_request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+      return reply.send(this.prometheus.export());
+    });
   }
 
   /** Expose the underlying Fastify instance for testing */

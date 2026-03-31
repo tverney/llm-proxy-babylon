@@ -4,6 +4,7 @@ import type {
   LanguageDetectionResult,
   RoutingDecision,
 } from '../models/types.ts';
+import { AdaptiveRouter } from './adaptive-router.ts';
 
 /**
  * RoutingEngine evaluates routing policies against language detection,
@@ -19,11 +20,13 @@ import type {
  */
 export class RoutingEngine {
   private rules: RoutingPolicyRule[] = [];
+  private adaptiveRouter?: AdaptiveRouter;
 
-  constructor(policy?: RoutingPolicy) {
+  constructor(policy?: RoutingPolicy, adaptiveRouter?: AdaptiveRouter) {
     if (policy) {
       this.rules = sortByPriority(policy.rules);
     }
+    this.adaptiveRouter = adaptiveRouter;
   }
 
   evaluate(
@@ -52,6 +55,23 @@ export class RoutingEngine {
       return skip(
         `Culturally-specific content (confidence ${culturalEntry.confidence}); keeping original language`
       );
+    }
+
+    // Adaptive routing: check learned recommendations before static rules
+    if (this.adaptiveRouter) {
+      const recommendation = this.adaptiveRouter.getRecommendation(
+        originalLang,
+        classification.primaryCategory,
+      );
+      if (recommendation) {
+        const targetLang = recommendation === 'skip' ? null : optimalLang;
+        return {
+          action: recommendation,
+          optimalLanguage: targetLang,
+          matchedRule: null,
+          reason: `Adaptive routing: learned "${recommendation}" for ${originalLang}+${classification.primaryCategory}`,
+        };
+      }
     }
 
     // Evaluate policy rules in priority order (Req 4.3)
