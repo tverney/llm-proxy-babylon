@@ -139,6 +139,13 @@ export interface TokenSavings {
   savingsPercent: number;         // percentage saved
 }
 
+export interface CostEstimate {
+  inputCostUSD: number;
+  outputCostUSD: number;
+  totalCostUSD: number;
+  savedInputCostUSD: number;
+}
+
 export interface PipelineContext {
   requestId: string;
   originalRequest: LLMRequest;
@@ -153,6 +160,7 @@ export interface PipelineContext {
   qualityComparison?: QualityComparison;
   tokenUsage?: TokenUsage;
   tokenSavings?: TokenSavings;
+  costEstimate?: CostEstimate;
   translationCacheHits?: number;
   translationCacheMisses?: number;
   timestamps: {

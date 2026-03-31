@@ -165,6 +165,7 @@ export class ProxyServer {
               baselineResponse,
               tokenUsage: context.tokenUsage ?? null,
               tokenSavings: context.tokenSavings ?? null,
+              costEstimate: context.costEstimate ?? null,
               conversationCache: conversationId ? {
                 conversationId,
                 cacheHits: context.translationCacheHits ?? 0,
