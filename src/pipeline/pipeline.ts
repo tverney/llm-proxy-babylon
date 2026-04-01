@@ -22,6 +22,7 @@ import { ShadowEvaluator } from '../components/shadow-evaluator.ts';
 import { ModelProfileRegistry } from '../config/model-profile-loader.ts';
 import { ConversationCache } from '../components/conversation-cache.ts';
 import { TokenCounter } from '../components/token-counter.ts';
+import { ConversationCompactor } from '../components/conversation-compactor.ts';
 
 export interface PipelineConfig {
   defaultLanguageInstructionConfig: LanguageInstructionConfig;
@@ -44,6 +45,7 @@ export class Pipeline {
   private profileRegistry: ModelProfileRegistry;
   private conversationCache: ConversationCache;
   private tokenCounter: TokenCounter;
+  private compactor: ConversationCompactor;
   private config: PipelineConfig;
 
   constructor(opts: {
@@ -70,6 +72,7 @@ export class Pipeline {
     this.profileRegistry = opts.profileRegistry;
     this.conversationCache = opts.conversationCache ?? new ConversationCache();
     this.tokenCounter = new TokenCounter();
+    this.compactor = new ConversationCompactor();
     this.config = {
       defaultLanguageInstructionConfig:
         opts.config?.defaultLanguageInstructionConfig ?? DEFAULT_LANGUAGE_INSTRUCTION_CONFIG,
@@ -180,6 +183,17 @@ export class Pipeline {
     } else {
       // Hybrid path: translate system messages only, keep user messages (Req 4.5)
       finalRequest = await this.handleHybrid(request, ctx, modelProfile);
+    }
+
+    // 5.5. Auto-compact if conversation history is too long
+    const compactionResult = this.compactor.compact(finalRequest.messages);
+    if (compactionResult.compacted) {
+      finalRequest = { ...finalRequest, messages: compactionResult.messages };
+      ctx.compaction = {
+        originalMessages: compactionResult.originalMessageCount,
+        compactedMessages: compactionResult.compactedMessageCount,
+        summaryTokens: compactionResult.summaryTokenEstimate,
+      };
     }
 
     // 6. Forward to LLM
