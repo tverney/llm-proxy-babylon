@@ -23,6 +23,7 @@ import { ModelProfileRegistry } from '../config/model-profile-loader.ts';
 import { ConversationCache } from '../components/conversation-cache.ts';
 import { TokenCounter } from '../components/token-counter.ts';
 import { ConversationCompactor } from '../components/conversation-compactor.ts';
+import { EnglishNormalizer } from '../components/english-normalizer.ts';
 
 export interface PipelineConfig {
   defaultLanguageInstructionConfig: LanguageInstructionConfig;
@@ -46,6 +47,7 @@ export class Pipeline {
   private conversationCache: ConversationCache;
   private tokenCounter: TokenCounter;
   private compactor: ConversationCompactor;
+  private englishNormalizer: EnglishNormalizer;
   private config: PipelineConfig;
 
   constructor(opts: {
@@ -73,6 +75,7 @@ export class Pipeline {
     this.conversationCache = opts.conversationCache ?? new ConversationCache();
     this.tokenCounter = new TokenCounter();
     this.compactor = new ConversationCompactor();
+    this.englishNormalizer = new EnglishNormalizer();
     this.config = {
       defaultLanguageInstructionConfig:
         opts.config?.defaultLanguageInstructionConfig ?? DEFAULT_LANGUAGE_INSTRUCTION_CONFIG,
@@ -133,6 +136,12 @@ export class Pipeline {
     const received = Date.now();
     const modelProfile = this.profileRegistry.get(request.model);
 
+    // 0. Normalize non-native English patterns (before language detection)
+    const normalization = this.englishNormalizer.normalizeMessages(request.messages);
+    if (normalization.anyNormalized) {
+      request = { ...request, messages: normalization.messages };
+    }
+
     // Concatenate all message contents for language detection and classification
     const fullText = request.messages.map((m) => m.content).join('\n');
 
@@ -152,7 +161,7 @@ export class Pipeline {
     const routingDecision = this.routingEngine.evaluate(detection, classification, modelProfile);
     const routingDone = Date.now();
 
-    // Build initial context (timestamps filled progressively)
+    // Build initial context
     const ctx: PipelineContext = {
       requestId,
       originalRequest: request,
@@ -171,6 +180,14 @@ export class Pipeline {
         completed: 0,
       },
     };
+
+    // Store normalization info
+    if (normalization.anyNormalized) {
+      ctx.normalization = {
+        wasNormalized: true,
+        patternsFound: normalization.totalPatternsFound,
+      };
+    }
 
     let finalRequest: LLMRequest;
 

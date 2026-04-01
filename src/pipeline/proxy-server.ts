@@ -153,6 +153,7 @@ export class ProxyServer {
             ...response.raw as object,
             _debug: {
               requestId: context.requestId,
+              normalization: context.normalization ?? null,
               detectedLanguage: context.detection.primary.tag,
               detectedConfidence: context.detection.primary.confidence,
               allDetectedLanguages: context.detection.all.map(l => ({ tag: l.tag, confidence: l.confidence })),
