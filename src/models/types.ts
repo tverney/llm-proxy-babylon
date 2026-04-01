@@ -163,6 +163,11 @@ export interface PipelineContext {
   costEstimate?: CostEstimate;
   translationCacheHits?: number;
   translationCacheMisses?: number;
+  compaction?: {
+    originalMessages: number;
+    compactedMessages: number;
+    summaryTokens: number;
+  };
   timestamps: {
     received: number;
     detectionDone: number;
