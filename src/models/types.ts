@@ -168,6 +168,10 @@ export interface PipelineContext {
     compactedMessages: number;
     summaryTokens: number;
   };
+  normalization?: {
+    wasNormalized: boolean;
+    patternsFound: string[];
+  };
   timestamps: {
     received: number;
     detectionDone: number;
