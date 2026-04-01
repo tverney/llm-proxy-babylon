@@ -183,6 +183,7 @@ export class ProxyServer {
                 cacheHits: context.translationCacheHits ?? 0,
                 cacheMisses: context.translationCacheMisses ?? 0,
               } : null,
+              responseTranslation: context.responseTranslation ?? null,
               timestamps: {
                 totalMs: context.timestamps.completed - context.timestamps.received,
                 detectionMs: context.timestamps.detectionDone - context.timestamps.received,
@@ -191,6 +192,9 @@ export class ProxyServer {
                   ? context.timestamps.translationDone - context.timestamps.routingDone
                   : 0,
                 llmMs: context.timestamps.llmResponseReceived - (context.timestamps.translationDone ?? context.timestamps.routingDone),
+                responseTranslationMs: context.timestamps.responseTranslationDone
+                  ? context.timestamps.responseTranslationDone - context.timestamps.llmResponseReceived
+                  : 0,
               },
             },
           };

@@ -32,6 +32,8 @@ detect language → parse mixed content → classify task → route → translat
 
 The key insight: LLMs have no difficulty *generating* output in a specified language — the performance gap is in *understanding* non-English prompts. So instead of translating the response back (which adds latency, cost, and errors), we translate the prompt to English and append an instruction like "Please respond in Thai since the original question was asked in Thai."
 
+For low-resource languages where the LLM's own generation is also weak, the optimizer can optionally post-translate the English response back using a dedicated MT backend — see [Response Translation](#response-translation).
+
 ### Smart Routing
 
 Not every prompt benefits from translation. The routing engine evaluates each request and decides:
@@ -134,6 +136,8 @@ Client → Proxy → Language Detector → Mixed Content Parser → Content Clas
                                                        Skip   Translate   Hybrid
                                                          ↘       ↓        ↙
                                                           LLM Forwarder → LLM API
+                                                                ↓
+                                                   [Optional] Response Translation
                                                                 ↓
                                                         Client ← Response
 ```
@@ -407,9 +411,103 @@ Configuration defaults:
 
 Note: shadow evaluation doubles LLM costs for translated requests. Enable it during a calibration period, then disable once routing policies are tuned.
 
+## Response Translation
+
+By default, the optimizer translates the prompt to English and appends a language instruction ("Please respond in Thai...") so the LLM generates the response in the user's language directly. This works well when the model is a competent generator in the target language.
+
+But for low-resource languages, the LLM's own output generation is often the weakest link. Research confirms this: LLMs reason internally in English regardless of input language, and the final-layer translation to the target language is lossy — especially for languages with limited training data ([Bajwa, "MALT: Mechanistic Ablation of Lossy Translation in LLMs", 2025](https://arxiv.org/abs/2502.00041); [Bafna et al., "The Translation Barrier Hypothesis", 2025](https://arxiv.org/abs/2506.22724)).
+
+Response translation addresses this by letting the LLM respond in English (its strongest language) and then post-translating the response back to the user's language using the configured MT backend. The language instruction is skipped — the dedicated translation model handles the output instead.
+
+```
+Standard path:    prompt (Thai) → translate to English → LLM responds in Thai → user
+Response translation: prompt (Thai) → translate to English → LLM responds in English → MT translates to Thai → user
+```
+
+### When to use it
+
+Response translation is most valuable when:
+- The target language is low-resource (Thai, Hindi, Urdu, Bengali, Swahili, Amharic)
+- The model produces garbled, repetitive, or code-switched output in the target language
+- You're using a smaller model with weak multilingual generation (Mistral 7B, Llama 8B)
+- Your MT backend is high quality (Amazon Translate, DeepL) — the response quality is bounded by the MT model
+
+It's less useful when:
+- The model generates well in the target language (GPT-4o with Portuguese, Nova Lite with Korean)
+- The task is creative writing where tone and style matter — MT can flatten these
+- Streaming is required — response translation only works for synchronous requests since the full response must be buffered before translation
+
+### How to enable
+
+Add `responseTranslation: true` to a routing policy rule in `src/serve.ts`:
+
+```typescript
+{
+  priority: 3,
+  matchConditions: {
+    sourceLanguagePattern: '^(th|hi|bn|ur|ta|te|ml|sw|am)$',
+  },
+  action: 'translate',
+  targetLanguage: 'en',
+  responseTranslation: true,
+}
+```
+
+This is a per-rule flag, so you can have different strategies for different languages:
+
+```typescript
+rules: [
+  // High-resource languages: standard path with language instruction
+  {
+    priority: 2,
+    matchConditions: {
+      sourceLanguagePattern: '^(pt|ko|ja|de|fr)$',
+      taskTypes: ['reasoning', 'math', 'code-generation'],
+    },
+    action: 'translate',
+    targetLanguage: 'en',
+  },
+  // Low-resource languages: response translation via MT backend
+  {
+    priority: 3,
+    matchConditions: {
+      sourceLanguagePattern: '^(th|hi|bn|ur|sw)$',
+      taskTypes: ['reasoning', 'math', 'code-generation'],
+    },
+    action: 'translate',
+    targetLanguage: 'en',
+    responseTranslation: true,
+  },
+]
+```
+
+### Debug output
+
+With `X-Debug: true`, the response includes a `responseTranslation` object:
+
+```json
+{
+  "_debug": {
+    "responseTranslation": {
+      "applied": true,
+      "originalContent": "Recursion is a programming technique where...",
+      "translatedContent": "การเรียกซ้ำเป็นเทคนิคการเขียนโปรแกรมที่...",
+      "sourceLanguage": "en",
+      "targetLanguage": "th",
+      "latencyMs": 120
+    },
+    "timestamps": {
+      "responseTranslationMs": 120
+    }
+  }
+}
+```
+
+When `responseTranslation` is active, the `languageInstruction` field in the debug output will be `null` — the language instruction is intentionally skipped since the MT backend handles the output language.
+
 ## Tests
 
-141 tests across 33 test files, using property-based testing with fast-check:
+251 tests across 42 test files, using property-based testing with fast-check:
 
 ```bash
 npm test
