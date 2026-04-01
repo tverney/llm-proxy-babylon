@@ -1,0 +1,20 @@
+[
+  {
+    "modelId": "us.amazon.nova-lite-v1:0",
+    "supportedLanguages": ["en", "zh", "ja", "ko", "de", "fr", "es", "pt"],
+    "languagePerformance": [
+      { "languageTag": "en", "performanceRating": 1.0 },
+      { "languageTag": "zh", "performanceRating": 0.92 },
+      { "languageTag": "ja", "performanceRating": 0.88 },
+      { "languageTag": "ko", "performanceRating": 0.85 },
+      { "languageTag": "de", "performanceRating": 0.90 },
+      { "languageTag": "fr", "performanceRating": 0.91 },
+      { "languageTag": "es", "performanceRating": 0.93 },
+      { "languageTag": "pt", "performanceRating": 0.89 }
+    ],
+    "defaultOptimalLanguage": "en",
+    "endpoint": "https://bedrock-runtime.us-east-1.amazonaws.com",
+    "provider": "bedrock",
+    "awsRegion": "us-east-1"
+  }
+]
