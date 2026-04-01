@@ -21,6 +21,7 @@ import { MetricsCollector } from '../components/metrics-collector.ts';
 import { ShadowEvaluator } from '../components/shadow-evaluator.ts';
 import { ModelProfileRegistry } from '../config/model-profile-loader.ts';
 import { ConversationCache } from '../components/conversation-cache.ts';
+import { TokenCounter } from '../components/token-counter.ts';
 
 export interface PipelineConfig {
   defaultLanguageInstructionConfig: LanguageInstructionConfig;
@@ -42,6 +43,7 @@ export class Pipeline {
   private shadowEvaluator: ShadowEvaluator;
   private profileRegistry: ModelProfileRegistry;
   private conversationCache: ConversationCache;
+  private tokenCounter: TokenCounter;
   private config: PipelineConfig;
 
   constructor(opts: {
@@ -67,6 +69,7 @@ export class Pipeline {
     this.shadowEvaluator = opts.shadowEvaluator;
     this.profileRegistry = opts.profileRegistry;
     this.conversationCache = opts.conversationCache ?? new ConversationCache();
+    this.tokenCounter = new TokenCounter();
     this.config = {
       defaultLanguageInstructionConfig:
         opts.config?.defaultLanguageInstructionConfig ?? DEFAULT_LANGUAGE_INSTRUCTION_CONFIG,
@@ -195,7 +198,7 @@ export class Pipeline {
 
     // Compute token savings when translation was applied
     if (routingDecision.action !== 'skip' && ctx.tokenUsage) {
-      ctx.tokenSavings = this.computeTokenSavings(request, ctx.tokenUsage);
+      ctx.tokenSavings = await this.computeTokenSavings(request, ctx.tokenUsage, modelProfile);
     }
 
     // Compute cost estimate
@@ -534,19 +537,24 @@ export class Pipeline {
    * while English averages ~4 chars per token. The actual LLM prompt_tokens gives us
    * the real optimized count.
    */
-  private computeTokenSavings(originalRequest: LLMRequest, actualUsage: TokenUsage): TokenSavings {
-    // Estimate original token count from character length using script-aware heuristic
-    const originalText = originalRequest.messages.map(m => m.content).join('\n');
-    const estimatedOriginalTokens = this.estimateTokenCount(originalText);
+  private async computeTokenSavings(originalRequest: LLMRequest, actualUsage: TokenUsage, modelProfile: ModelProfile): Promise<TokenSavings> {
+    // Use precise Bedrock token counting when available, fall back to estimation
+    const originalCount = await this.tokenCounter.countInputTokens(
+      originalRequest.messages,
+      originalRequest.model,
+      modelProfile.provider,
+      modelProfile.awsRegion,
+    );
+
     const optimizedPromptTokens = actualUsage.promptTokens;
-    const saved = estimatedOriginalTokens - optimizedPromptTokens;
+    const saved = originalCount.inputTokens - optimizedPromptTokens;
 
     return {
-      originalPromptTokens: estimatedOriginalTokens,
+      originalPromptTokens: originalCount.inputTokens,
       optimizedPromptTokens,
       tokensSaved: Math.max(saved, 0),
-      savingsPercent: estimatedOriginalTokens > 0
-        ? Math.max((saved / estimatedOriginalTokens) * 100, 0)
+      savingsPercent: originalCount.inputTokens > 0
+        ? Math.max((saved / originalCount.inputTokens) * 100, 0)
         : 0,
     };
   }
