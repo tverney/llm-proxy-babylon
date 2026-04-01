@@ -1,0 +1,37 @@
+{
+    "rules": [
+        {
+            "priority": 1,
+            "matchConditions": {
+                "taskTypes": [
+                    "culturally-specific"
+                ]
+            },
+            "action": "skip"
+        },
+        {
+            "priority": 2,
+            "matchConditions": {
+                "sourceLanguagePattern": "^(th|hi|bn|ur|ta|te|ml|sw|am)$"
+            },
+            "action": "translate",
+            "targetLanguage": "en",
+            "responseTranslation": true
+        },
+        {
+            "priority": 3,
+            "matchConditions": {
+                "taskTypes": [
+                    "reasoning",
+                    "math",
+                    "code-generation",
+                    "general"
+                ],
+                "sourceLanguagePattern": "^(?!en).*$"
+            },
+            "action": "translate",
+            "targetLanguage": "en",
+            "shadowEvaluation": false
+        }
+    ]
+}

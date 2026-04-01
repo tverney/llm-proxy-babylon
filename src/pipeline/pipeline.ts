@@ -23,6 +23,7 @@ import { ModelProfileRegistry } from '../config/model-profile-loader.ts';
 import { ConversationCache } from '../components/conversation-cache.ts';
 import { TokenCounter } from '../components/token-counter.ts';
 import { ConversationCompactor } from '../components/conversation-compactor.ts';
+import { MarkdownShielder } from '../components/markdown-shielder.ts';
 import { EnglishNormalizer } from '../components/english-normalizer.ts';
 
 export interface PipelineConfig {
@@ -48,6 +49,7 @@ export class Pipeline {
   private tokenCounter: TokenCounter;
   private compactor: ConversationCompactor;
   private englishNormalizer: EnglishNormalizer;
+  private markdownShielder: MarkdownShielder;
   private config: PipelineConfig;
 
   constructor(opts: {
@@ -76,6 +78,7 @@ export class Pipeline {
     this.tokenCounter = new TokenCounter();
     this.compactor = new ConversationCompactor();
     this.englishNormalizer = new EnglishNormalizer();
+    this.markdownShielder = new MarkdownShielder();
     this.config = {
       defaultLanguageInstructionConfig:
         opts.config?.defaultLanguageInstructionConfig ?? DEFAULT_LANGUAGE_INSTRUCTION_CONFIG,
@@ -571,8 +574,11 @@ export class Pipeline {
     const toLang = ctx.detection.primary.tag;
 
     try {
-      const result = await this.translator.translate(response.content, fromLang, toLang);
-      const translatedContent = result.translatedText;
+      // Shield markdown formatting before translation to prevent MT from mangling it
+      const { shielded, tokens } = this.markdownShielder.shield(response.content);
+      const result = await this.translator.translate(shielded, fromLang, toLang);
+      // Restore markdown formatting after translation
+      const translatedContent = this.markdownShielder.unshield(result.translatedText, tokens);
       ctx.timestamps.responseTranslationDone = Date.now();
 
       ctx.responseTranslation = {
