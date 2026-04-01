@@ -10,6 +10,8 @@ Most leading LLMs allocate approximately 93% of their training tokens to English
 
 Of the approximately 7,000 spoken languages globally, most LLMs only cover about 50 high-resource ones. The remaining languages lack both the digital data and quality resources to benefit from recent AI advancements — creating barriers to education, healthcare, financial access, and employment for the communities that speak them. ([Frontiers Research Topic: Language Models for Low-Resource Languages](https://www.frontiersin.org/research-topics/77716/language-models-for-low-resource-languages))
 
+The bias goes even deeper: research shows that LLMs give lower-quality responses to non-native English speakers even when they're writing in English. The quality gap persists between native speakers from Western vs non-Western countries, and worsens when the model infers the user is non-native — an "anchoring effect" that further degrades response quality. ([Reusens et al., "Native Design Bias", 2024](https://arxiv.org/abs/2406.17385))
+
 This isn't a theoretical concern. In our own testing with Mistral 7B on a Thai prompt about sorting algorithms:
 
 - **Direct Thai input** produced garbled output mixing English fragments into Thai text ("วงจirkle", "sorteering technique"), with confused reasoning
@@ -445,6 +447,7 @@ Every correctness property from the design document is covered by a property-bas
 - **Cost arbitrage across models** — Auto-route to the cheapest model+language combination that meets a quality threshold.
 - **Continuous multilingual monitoring** — Extend `/v1/evaluate` into a production monitoring tool that alerts when quality drops for specific languages.
 - **Auto-tuning routing policies** — A/B test translated vs direct paths per language using the shadow evaluator and auto-tune routing policies from real quality data.
+- **Non-native English normalization** — Research shows LLMs give lower-quality responses to non-native English speakers, even when writing in English ([Reusens et al., 2024](https://arxiv.org/abs/2406.17385)). The proxy could detect non-native English patterns (grammar, phrasing, dialect markers) and rephrase prompts into standard English before sending to the LLM — closing the quality gap not just across languages, but across English dialects too.
 
 ## License
 
