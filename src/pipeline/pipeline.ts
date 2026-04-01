@@ -214,7 +214,7 @@ export class Pipeline {
     }
 
     // 6. Forward to LLM
-    const llmResponse = await this.forwarder.forward(
+    let llmResponse = await this.forwarder.forward(
       finalRequest,
       modelProfile.endpoint,
       headers,
@@ -223,6 +223,11 @@ export class Pipeline {
     );
     ctx.llmResponse = llmResponse;
     ctx.timestamps.llmResponseReceived = Date.now();
+
+    // 6.5. Post-translate the LLM response if responseTranslation is enabled
+    if (this.shouldUseResponseTranslation(ctx) && llmResponse.content) {
+      llmResponse = await this.translateResponse(llmResponse, ctx);
+    }
 
     // Extract token usage from LLM response
     ctx.tokenUsage = this.extractTokenUsage(llmResponse);
@@ -294,6 +299,8 @@ export class Pipeline {
   /**
    * Handle the "translate" routing action.
    * Translates all user/system message text segments, reassembles, and appends language instruction.
+   * When responseTranslation is enabled on the matched rule, the language instruction is skipped —
+   * the LLM will respond in its optimal language and the response is post-translated.
    * On translation failure, falls back to original prompt without language instruction (Req 5.3).
    */
   private async handleTranslate(
@@ -304,7 +311,7 @@ export class Pipeline {
   ): Promise<LLMRequest> {
     const originalLang = ctx.detection.primary.tag;
     const targetLang = ctx.routingDecision.optimalLanguage!;
-    const instructionConfig = this.getLanguageInstructionConfig(ctx);
+    const useResponseTranslation = this.shouldUseResponseTranslation(ctx);
 
     try {
       const { translated: translatedMessages, cacheHits, cacheMisses } = await this.translateMessages(
@@ -318,11 +325,18 @@ export class Pipeline {
       ctx.translationCacheHits = cacheHits;
       ctx.translationCacheMisses = cacheMisses;
 
-      // Build language instruction
+      // When response translation is active, skip the language instruction —
+      // the LLM responds in English and we post-translate the response.
+      if (useResponseTranslation) {
+        ctx.translatedPrompt = translatedMessages.map((m) => m.content).join('\n');
+        return { ...request, messages: translatedMessages };
+      }
+
+      // Standard path: inject language instruction so the LLM responds in the original language
+      const instructionConfig = this.getLanguageInstructionConfig(ctx);
       const instruction = this.translator.buildLanguageInstruction(originalLang, instructionConfig);
       ctx.languageInstruction = instruction;
 
-      // Inject language instruction
       const finalMessages = this.injectLanguageInstruction(
         translatedMessages,
         instruction,
@@ -532,6 +546,84 @@ export class Pipeline {
     }
 
     return result;
+  }
+
+  /**
+   * Check whether response translation should be applied.
+   * Enabled when the matched routing rule has responseTranslation: true
+   * and the routing action is not 'skip'.
+   */
+  private shouldUseResponseTranslation(ctx: PipelineContext): boolean {
+    if (ctx.routingDecision.action === 'skip') return false;
+    return ctx.routingDecision.matchedRule?.responseTranslation === true;
+  }
+
+  /**
+   * Post-translate the LLM response from the optimal language back to the user's
+   * original language. Updates the response content and raw payload in-place.
+   * On failure, returns the original response unchanged and logs a warning.
+   */
+  private async translateResponse(
+    response: LLMResponse,
+    ctx: PipelineContext,
+  ): Promise<LLMResponse> {
+    const fromLang = ctx.routingDecision.optimalLanguage ?? 'en';
+    const toLang = ctx.detection.primary.tag;
+
+    try {
+      const result = await this.translator.translate(response.content, fromLang, toLang);
+      const translatedContent = result.translatedText;
+      ctx.timestamps.responseTranslationDone = Date.now();
+
+      ctx.responseTranslation = {
+        applied: true,
+        originalContent: response.content,
+        translatedContent,
+        sourceLanguage: fromLang,
+        targetLanguage: toLang,
+        latencyMs: ctx.timestamps.responseTranslationDone - ctx.timestamps.llmResponseReceived,
+      };
+
+      // Patch the raw response payload so the caller gets the translated content
+      const patchedRaw = this.patchResponseContent(response.raw, translatedContent);
+
+      return { raw: patchedRaw, content: translatedContent, statusCode: response.statusCode };
+    } catch (err) {
+      console.warn(
+        `[Pipeline] Response translation failed for request ${ctx.requestId} (${fromLang} → ${toLang}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      ctx.timestamps.responseTranslationDone = Date.now();
+      ctx.responseTranslation = {
+        applied: false,
+        originalContent: response.content,
+        translatedContent: response.content,
+        sourceLanguage: fromLang,
+        targetLanguage: toLang,
+        latencyMs: ctx.timestamps.responseTranslationDone - ctx.timestamps.llmResponseReceived,
+      };
+      return response;
+    }
+  }
+
+  /**
+   * Patch the raw OpenAI-compatible response object with translated content.
+   */
+  private patchResponseContent(raw: unknown, translatedContent: string): unknown {
+    if (!raw || typeof raw !== 'object') return raw;
+    const obj = raw as Record<string, unknown>;
+    if (!Array.isArray(obj.choices) || obj.choices.length === 0) return raw;
+
+    const choices = (obj.choices as Array<Record<string, unknown>>).map((choice, i) => {
+      if (i === 0 && choice.message && typeof choice.message === 'object') {
+        return {
+          ...choice,
+          message: { ...(choice.message as Record<string, unknown>), content: translatedContent },
+        };
+      }
+      return choice;
+    });
+
+    return { ...obj, choices };
   }
 
   /**

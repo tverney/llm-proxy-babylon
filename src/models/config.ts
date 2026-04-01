@@ -37,6 +37,14 @@ export interface RoutingPolicyRule {
   targetLanguage?: string;
   shadowEvaluation?: boolean;
   languageInstructionMode?: 'system_message' | 'append_to_last_user';
+  /**
+   * When true, the LLM responds in its optimal language (English) and the
+   * response is post-translated back to the user's original language using
+   * the configured MT backend. This bypasses the language instruction injection.
+   * Useful for low-resource languages where the LLM's own generation is lossy.
+   * Only applies to non-streaming requests.
+   */
+  responseTranslation?: boolean;
 }
 
 export interface RoutingPolicy {

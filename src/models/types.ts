@@ -172,6 +172,14 @@ export interface PipelineContext {
     wasNormalized: boolean;
     patternsFound: string[];
   };
+  responseTranslation?: {
+    applied: boolean;
+    originalContent: string;
+    translatedContent: string;
+    sourceLanguage: string;
+    targetLanguage: string;
+    latencyMs: number;
+  };
   timestamps: {
     received: number;
     detectionDone: number;
@@ -180,6 +188,7 @@ export interface PipelineContext {
     routingDone: number;
     translationDone?: number;
     llmResponseReceived: number;
+    responseTranslationDone?: number;
     completed: number;
   };
 }

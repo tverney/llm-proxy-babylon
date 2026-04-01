@@ -45,6 +45,18 @@ const server = new ProxyServer({
         targetLanguage: 'en',
         shadowEvaluation: false,
       },
+      // Response translation: for low-resource languages, post-translate the LLM's
+      // English response back to the user's language using the MT backend instead of
+      // relying on the LLM's own generation. Only applies to non-streaming requests.
+      // {
+      //   priority: 3,
+      //   matchConditions: {
+      //     sourceLanguagePattern: '^(th|hi|bn|ur|ta|te|ml|sw|am)$',
+      //   },
+      //   action: 'translate',
+      //   targetLanguage: 'en',
+      //   responseTranslation: true,
+      // },
     ],
   },
   translatorConfig: {
