@@ -534,6 +534,19 @@ Every correctness property from the design document is covered by a property-bas
 - **Response length optimization** — LLMs produce longer, more repetitive responses in languages they're weaker in, inflating output token costs. Our tests showed 1749 output tokens of repetitive Thai content vs 1446 from the optimized path for the same question.
 - **Regulatory compliance without quality loss** — Serve users in their required local language (EU AI Act, Brazil's LGPD) while reasoning in English for maximum quality.
 
+### But What If Models Get Better at Multilingual?
+
+They will — and the optimizer is designed for that. As models improve their multilingual capabilities, the proxy's value shifts rather than disappears:
+
+- **Token costs are structural, not a training problem.** BPE tokenizers will always split Thai, Arabic, and Korean into 2-4x more tokens than semantically equivalent English. Unless providers fundamentally redesign their tokenizers and retrain everything, the cost disparity persists regardless of how multilingual the model becomes. The proxy saves money by sending fewer tokens.
+- **Conversation history compounding doesn't go away.** Even a perfectly multilingual model still charges per token. A 10-turn Thai conversation still accumulates tokens 3x faster than English. The conversation translation cache solves this at the infrastructure level.
+- **RAG retrieval is an embedding problem, not an LLM problem.** Vector embeddings are English-centric. Translating queries to English before retrieval improves recall regardless of how good the LLM itself is at understanding Thai.
+- **Fine-tuning ROI is permanent.** Companies fine-tune on English domain data. A perfectly multilingual base model still won't have that domain-specific knowledge accessible through non-English prompts unless the fine-tuning data was also multilingual — which it almost never is.
+- **Safety alignment will always lag for low-resource languages.** Even as models improve, safety training data will remain English-heavy. Routing through English for safety filtering is a defense-in-depth strategy that stays relevant.
+- **The adaptive router handles the transition gracefully.** As models get better at specific languages, the shadow evaluator detects that translation no longer helps, and the adaptive router automatically switches to `skip`. The proxy doesn't fight against model improvements — it adapts to them. For a language where the model reaches English parity, the proxy becomes a transparent pass-through with zero overhead.
+
+Today the proxy is primarily about quality. As models improve, it becomes primarily about cost optimization, safety, and RAG. The architecture already supports that transition because routing decisions are data-driven, not hardcoded assumptions.
+
 ### Roadmap
 
 - **Cost-aware routing** — Factor estimated token costs into routing decisions. If the original language would exceed a token threshold, automatically translate to reduce costs. No built-in way to do this exists in any LLM provider today.
